@@ -188,6 +188,7 @@ public:
     const int mnMaxY;
     const cv::Mat mK;
 
+    double odomx, odomy, odomtheta;
 
     // The following variables need to be accessed trough a mutex to be thread safe.
 protected:

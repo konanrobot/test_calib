@@ -203,7 +203,17 @@ public:
   double fx, fy, cx, cy, bf;
 };
 
+class EdgeSE3Calib : public BaseBinaryEdge<6, SE3Quat, VertexSE3Expmap, VertexSE3Expmap>
+{
+  public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
+    EdgeSE3Calib();
 
+    void computeError();
+
+    virtual bool read(std::istream& is);
+    virtual bool write(std::ostream& os) const;
+};
 
 } // end namespace
 

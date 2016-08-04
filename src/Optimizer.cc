@@ -34,6 +34,8 @@
 
 #include<mutex>
 
+#define DOOM
+
 namespace ORB_SLAM2
 {
 
@@ -566,6 +568,10 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     vector<MapPoint*> vpMapPointEdgeStereo;
     vpMapPointEdgeStereo.reserve(nExpectedSize);
 
+    vector<g2o::EdgeSE3Calib*> vpEdgesSe3Calib;
+    vpEdgesSe3Calib.reserve(nExpectedSize);
+
+
     const float thHuberMono = sqrt(5.991);
     const float thHuberStereo = sqrt(7.815);
 
@@ -652,6 +658,46 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         }
     }
 
+#ifdef DOOM
+    g2o::VertexSE3Expmap* vCalib = new g2o::VertexSE3Expmap;
+    vCalib->setEstimate(g2o::SE3Quat(Eigen::Matrix3d::Identity(), Eigen::Vector3d(0.06,0,-0.12)));
+    int id_ = 99999999;
+    vCalib->setId(id_);
+    optimizer.addVertex(vCalib);
+    for(list<KeyFrame*>::iterator lit=lLocalKeyFrames.begin(), lend=lLocalKeyFrames.end(); lit!=lend; lit++)
+    {
+        KeyFrame* pKFi = *lit;
+        g2o::EdgeSE3Calib* e = new g2o::EdgeSE3Calib;
+        e->setVertex(0,dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKFi->mnId)));
+        e->setVertex(1,vCalib);
+        Eigen::AngleAxisd rotz(pKFi->odomtheta, Eigen::Vector3d::UnitZ());
+        Eigen::Matrix3d rot = rotz.toRotationMatrix();
+        Eigen::Vector3d tras(pKFi->odomx, pKFi->odomy, 0);
+        g2o::SE3Quat meas(rot, tras);
+        e->setMeasurement(meas);
+        g2o::Matrix6d Info = g2o::Matrix6d::Identity();
+        e->setInformation(Info);
+        optimizer.addEdge(e);
+        vpEdgesSe3Calib.push_back(e);
+    }
+    for(list<KeyFrame*>::iterator lit=lFixedCameras.begin(), lend=lFixedCameras.end(); lit!=lend; lit++)
+    {
+        KeyFrame* pKFi = *lit;
+        g2o::EdgeSE3Calib* e = new g2o::EdgeSE3Calib;
+        e->setVertex(0,dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKFi->mnId)));
+        e->setVertex(1,vCalib);
+        Eigen::AngleAxisd rotz(pKFi->odomtheta, Eigen::Vector3d::UnitZ());
+        Eigen::Matrix3d rot = rotz.toRotationMatrix();
+        Eigen::Vector3d tras(pKFi->odomx, pKFi->odomy, 0);
+        g2o::SE3Quat meas(rot, tras);
+        e->setMeasurement(meas);
+        g2o::Matrix6d Info = g2o::Matrix6d::Identity();
+        e->setInformation(Info);
+        optimizer.addEdge(e);
+        vpEdgesSe3Calib.push_back(e);
+    }
+#endif
+
     if(pbStopFlag)
         if(*pbStopFlag)
             return;
@@ -700,6 +746,19 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
 
         e->setRobustKernel(0);
     }
+#ifdef DOOM
+    for(size_t i=0, iend=vpEdgesSe3Calib.size(); i<iend;i++)
+    {
+        g2o::EdgeSE3Calib* e = vpEdgesSe3Calib[i];
+
+        if(e->chi2()>7.815)
+        {
+            e->setLevel(1);
+        }
+
+        e->setRobustKernel(0);
+    }
+#endif
 
     // Optimize again without the outliers
 
@@ -775,6 +834,11 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         pMP->SetWorldPos(Converter::toCvMat(vPoint->estimate()));
         pMP->UpdateNormalAndDepth();
     }
+
+#ifdef DOOM
+    g2o::SE3Quat se3quat = vCalib->estimate();
+    cout << "This loop, calibration result is :" << se3quat << endl;
+#endif
 }
 
 

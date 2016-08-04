@@ -363,5 +363,30 @@ void EdgeStereoSE3ProjectXYZOnlyPose::linearizeOplus() {
   _jacobianOplusXi(2,5) = _jacobianOplusXi(0,5)-bf*invz_2;
 }
 
+EdgeSE3Calib::EdgeSE3Calib()
+{
+}
+
+bool EdgeSE3Calib::read(std::istream& is)
+{
+  (void) is;
+  return false;
+}
+
+bool EdgeSE3Calib::write(std::ostream& os) const
+{
+  (void) os;
+  return false;
+}
+
+void EdgeSE3Calib::computeError()
+{
+  const VertexSE3Expmap* stereoNode = static_cast<const VertexSE3Expmap*>(_vertices[0]);
+  const VertexSE3Expmap* offsetNode = static_cast<const VertexSE3Expmap*>(_vertices[1]);
+
+  SE3Quat temp = measurement().inverse()*(stereoNode->estimate()*offsetNode->estimate());
+
+  _error = temp.log();
+}
 
 } // end namespace

@@ -31,7 +31,7 @@
 using namespace std;
 
 void LoadImages(const string &strPathToSequence, vector<string> &vstrImageLeft,
-                vector<string> &vstrImageRight, vector<double> &vTimestamps);
+                vector<string> &vstrImageRight, vector<double> &vTimestamps, vector<vector<double>> &vOdom);
 
 int main(int argc, char **argv)
 {
@@ -45,7 +45,8 @@ int main(int argc, char **argv)
     vector<string> vstrImageLeft;
     vector<string> vstrImageRight;
     vector<double> vTimestamps;
-    LoadImages(string(argv[3]), vstrImageLeft, vstrImageRight, vTimestamps);
+    vector<vector<double>> vOdom;
+    LoadImages(string(argv[3]), vstrImageLeft, vstrImageRight, vTimestamps, vOdom);
 
     const int nImages = vstrImageLeft.size();
 
@@ -68,6 +69,7 @@ int main(int argc, char **argv)
         imLeft = cv::imread(vstrImageLeft[ni],CV_LOAD_IMAGE_UNCHANGED);
         imRight = cv::imread(vstrImageRight[ni],CV_LOAD_IMAGE_UNCHANGED);
         double tframe = vTimestamps[ni];
+        vector<double> vOdo = vOdom[ni];
 
         if(imLeft.empty())
         {
@@ -83,7 +85,7 @@ int main(int argc, char **argv)
 #endif
 
         // Pass the images to the SLAM system
-        SLAM.TrackStereo(imLeft,imRight,tframe);        
+        SLAM.TrackStereo(imLeft,imRight,tframe, vOdo);
 
 #ifdef COMPILEDWITHC11
         std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
@@ -127,11 +129,13 @@ int main(int argc, char **argv)
 }
 
 void LoadImages(const string &strPathToSequence, vector<string> &vstrImageLeft,
-                vector<string> &vstrImageRight, vector<double> &vTimestamps)
+                vector<string> &vstrImageRight, vector<double> &vTimestamps, vector<vector<double>> &vOdom)
 {
-    ifstream fTimes;
+    ifstream fTimes, fOdoms;
     string strPathTimeFile = strPathToSequence + "/times.txt";
+    string strPathOdomFile = strPathToSequence + "/closestodom.txt";
     fTimes.open(strPathTimeFile.c_str());
+    fOdoms.open(strPathOdomFile.c_str());
     while(!fTimes.eof())
     {
         string s;
@@ -144,6 +148,18 @@ void LoadImages(const string &strPathToSequence, vector<string> &vstrImageLeft,
             ss >> t;
             vTimestamps.push_back(t);
         }
+    }
+    for(int i = 0; i < vTimestamps.size(); i++)
+    {
+        double time, x, y, theta;
+        vector<double> temp;
+
+        fOdoms >> time;
+        fOdoms >> x;
+        fOdoms >> y;
+        fOdoms >> theta;
+        temp.push_back(x); temp.push_back(y); temp.push_back(theta);
+        vOdom.push_back(temp);
     }
 
     string strPrefixLeft = strPathToSequence + "/image_0/";
