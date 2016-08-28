@@ -101,6 +101,11 @@ g2o/types/types_seven_dof_expmap.h
 g2o/types/se3quat.h
 g2o/types/se3_ops.h
 g2o/types/se3_ops.hpp
+g2o/types/dquat2mat.h
+g2o/types/dquat2mat.cpp
+g2o/types/JPL.hpp
+g2o/types/se3quat_jpl.h
+g2o/types/gyropreint.h
 #core
 g2o/core/base_edge.h
 g2o/core/base_binary_edge.h
@@ -174,5 +179,5 @@ g2o/stuff/os_specific.c
 g2o/stuff/os_specific.h
 g2o/stuff/string_tools.cpp
 g2o/stuff/property.cpp       
-g2o/stuff/property.h       
+g2o/stuff/property.h
 )

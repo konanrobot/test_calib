@@ -30,6 +30,8 @@
 
 using namespace std;
 
+#define DO_CALIB
+
 void LoadImages(const string &strPathToSequence, vector<string> &vstrImageLeft,
                 vector<string> &vstrImageRight, vector<double> &vTimestamps, vector<vector<double>> &vOdom);
 
@@ -107,6 +109,10 @@ int main(int argc, char **argv)
         if(ttrack<T)
             usleep((T-ttrack)*1e6);
     }
+
+#ifdef DO_CALIB
+    SLAM.DoOnlineCalibration();
+#endif
 
     // Stop all threads
     SLAM.Shutdown();

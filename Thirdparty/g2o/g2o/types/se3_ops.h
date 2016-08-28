@@ -39,6 +39,26 @@ namespace g2o {
   inline Vector3d project(const Vector4d&);
   inline Vector3d unproject(const Vector2d&);
   inline Vector4d unproject(const Vector3d&);
+  template <typename Derived, typename DerivedOther>
+  inline void skew(Eigen::MatrixBase<Derived>& s, const Eigen::MatrixBase<DerivedOther>& v){
+    const double x=2*v(0);
+    const double y=2*v(1);
+    const double z=2*v(2);
+    s <<  0.,  z, -y, -z,  0,  x,  y, -x,  0;
+  }
+  template <typename Derived, typename DerivedOther>
+  void skew(Eigen::MatrixBase<Derived>& Sx,
+      Eigen::MatrixBase<Derived>& Sy,
+      Eigen::MatrixBase<Derived>& Sz,
+      const Eigen::MatrixBase<DerivedOther>& R){
+    const double
+      r11=2*R(0,0), r12=2*R(0,1), r13=2*R(0,2),
+      r21=2*R(1,0), r22=2*R(1,1), r23=2*R(1,2),
+      r31=2*R(2,0), r32=2*R(2,1), r33=2*R(2,2);
+    Sx <<    0,    0,    0,  -r31, -r32, -r33,   r21,   r22,  r23;
+    Sy <<  r31,  r32,  r33,     0,    0,    0,  -r11,  -r12, -r13;
+    Sz << -r21, -r22, -r23,   r11,   r12, r13,     0,    0,    0;
+  }
 
 #include "se3_ops.hpp"
 

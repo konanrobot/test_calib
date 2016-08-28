@@ -34,11 +34,15 @@
 
 #include<mutex>
 
-#define DOOM
+#define DOOM_LOCAL
+#define DOOM_GLOBAL
 
 namespace ORB_SLAM2
 {
 
+bool Optimizer::notInitCalib = true;
+bool Optimizer::notInitBias = true;
+g2o::SE3Quat Optimizer::calibEst = g2o::SE3Quat();
 
 void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
 {
@@ -47,6 +51,34 @@ void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopF
     BundleAdjustment(vpKFs,vpMP,nIterations,pbStopFlag, nLoopKF, bRobust);
 }
 
+void Optimizer::getClosestGyro(double &lasttime, double &curtime, vector<pair<double, double>> &gyrodata)
+{
+    string gyroPath = "/home/doom/zed/gyro.txt";
+    ifstream in(gyroPath);
+    for(int i = 0; i < 530; i++){
+        double temp;
+        in >> temp;
+        if((temp >= lasttime) && (temp <= curtime))
+        {
+            pair<double, double> ptemp;
+            ptemp.first = temp;
+            in >> temp; in >> temp;
+            ptemp.second = temp;
+            gyrodata.push_back(ptemp);
+        }
+        else
+        {
+            in >> temp; in >> temp;
+        }
+    }
+//    cout << "The gyro datas between:" << lasttime << ", and:" << curtime
+//         << " are:";
+//    for(auto it:gyrodata)
+//    {
+//        cout << it.first << " ";
+//    }
+//    cout << endl;
+}
 
 void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<MapPoint *> &vpMP,
                                  int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
@@ -70,6 +102,8 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
     long unsigned int maxKFid = 0;
 
     // Set KeyFrame vertices
+    vector<g2o::VertexSE3Expmap*> vVertex;
+    vVertex.reserve(vpKFs.size());
     for(size_t i=0; i<vpKFs.size(); i++)
     {
         KeyFrame* pKF = vpKFs[i];
@@ -80,9 +114,25 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
         vSE3->setId(pKF->mnId);
         vSE3->setFixed(pKF->mnId==0);
         optimizer.addVertex(vSE3);
+        vVertex.push_back(vSE3);
         if(pKF->mnId>maxKFid)
             maxKFid=pKF->mnId;
     }
+
+#ifdef DOOM_GLOBAL
+    g2o::VertexSE3Expmap* vCalib = new g2o::VertexSE3Expmap;
+//    Eigen::Matrix3d priorR = Eigen::Matrix3d::Identity();
+//    priorR.col(0) = Eigen::Vector3d(0,-1,0);
+//    priorR.col(1) = Eigen::Vector3d(0,0,-1);
+//    priorR.col(2) = Eigen::Vector3d(1,0,0);
+//    vCalib->setEstimate(g2o::SE3Quat(priorR, Eigen::Vector3d(0.06,0,-0.125)));
+    vCalib->setEstimate(calibEst);
+    cout << "before online optimize :" << calibEst << endl;
+    int id_ = 99999999;
+    vCalib->setId(id_);
+    optimizer.addVertex(vCalib);
+
+#endif
 
     const float thHuber2D = sqrt(5.99);
     const float thHuber3D = sqrt(7.815);
@@ -155,6 +205,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
                 e->setMeasurement(obs);
                 const float &invSigma2 = pKF->mvInvLevelSigma2[kpUn.octave];
                 Eigen::Matrix3d Info = Eigen::Matrix3d::Identity()*invSigma2;
+//                Eigen::Matrix3d Info = Eigen::Matrix3d::Zero();
                 e->setInformation(Info);
 
                 if(bRobust)
@@ -184,6 +235,74 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
             vbNotIncludedMP[i]=false;
         }
     }
+
+#ifdef DOOM_GLOBAL
+    for(int i = 0; i < vpKFs.size() - 1; i++)
+    {
+        KeyFrame* lastKF = vpKFs[i];
+        KeyFrame* curKF = vpKFs[i+1];
+        g2o::VertexSE3Expmap* lastV = vVertex[i];
+        g2o::VertexSE3Expmap* curV = vVertex[i+1];
+        g2o::EdgeSE3Calib* e = new g2o::EdgeSE3Calib();
+        e->resize(3);
+        e->vertices()[0] = lastV;
+        e->vertices()[1] = curV;
+        e->vertices()[2] = vCalib;
+        Eigen::AngleAxisd last_rotz(lastKF->odomtheta, Eigen::Vector3d::UnitZ());
+        Eigen::AngleAxisd cur_rotz(curKF->odomtheta, Eigen::Vector3d::UnitZ());
+        Eigen::Matrix3d last_rot = last_rotz.toRotationMatrix();
+        Eigen::Matrix3d cur_rot = cur_rotz.toRotationMatrix();
+        Eigen::Vector3d last_tras(lastKF->odomx, lastKF->odomy, 0);
+        Eigen::Vector3d cur_tras(curKF->odomx, curKF->odomy, 0);
+        g2o::SE3Quat last_pose(last_rot, last_tras);
+        g2o::SE3Quat cur_pose(cur_rot, cur_tras);
+        g2o::SE3Quat meas = cur_pose*last_pose.inverse();
+        e->setMeasurement(meas);
+        g2o::Matrix6d Info = g2o::Matrix6d::Identity();
+        Info(0,0) = 1/1.7976931348623157e+308;
+        Info(1,1) = 1/1.7976931348623157e+308;
+        Info(2,2) = 1/0.2;
+        Info(3,3) = 1/0.1;
+        Info(4,4) = 1/0.1;
+        Info(5,5) = 1/1.7976931348623157e+308;
+        e->setInformation(Info);
+        optimizer.addEdge(e);
+//        cout << "add" << endl;
+    }
+//    for(int i = 0; i < vpKFs.size()-1; i++)
+//    {
+//        KeyFrame* lastKF = vpKFs[i];
+//        KeyFrame* curKF = vpKFs[i+1];
+//        g2o::EdgeSE3Calib* e = new g2o::EdgeSE3Calib;
+//        e->resize(3);
+//        e->setVertex(0,vVertex[i]);
+//        e->setVertex(0,vVertex[i+1]);
+//        e->setVertex(1,vCalib);
+////        Eigen::AngleAxisd rotz(pKFi->odomtheta, Eigen::Vector3d::UnitZ());
+////        Eigen::Matrix3d rot = rotz.toRotationMatrix();
+////        Eigen::Vector3d tras(pKFi->odomx, pKFi->odomy, 0);
+////        g2o::SE3Quat meas(rot, tras);
+//        Eigen::AngleAxisd last_rotz(lastKF->odomtheta, Eigen::Vector3d::UnitZ());
+//        Eigen::AngleAxisd cur_rotz(curKF->odomtheta, Eigen::Vector3d::UnitZ());
+//        Eigen::Matrix3d last_rot = last_rotz.toRotationMatrix();
+//        Eigen::Matrix3d cur_rot = cur_rotz.toRotationMatrix();
+//        Eigen::Vector3d last_tras(lastKF->odomx, lastKF->odomy, 0);
+//        Eigen::Vector3d cur_tras(curKF->odomx, curKF->odomy, 0);
+//        g2o::SE3Quat last_pose(last_rot, last_tras);
+//        g2o::SE3Quat cur_pose(cur_rot, cur_tras);
+//        g2o::SE3Quat meas = cur_pose*last_pose.inverse();
+//        e->setMeasurement(meas);
+//        g2o::Matrix6d Info = g2o::Matrix6d::Identity();
+//        Info(0,0) = 1/1.7976931348623157e+308;
+//        Info(1,1) = 1/1.7976931348623157e+308;
+//        Info(2,2) = 1/0.2;
+//        Info(3,3) = 1/0.1;
+//        Info(4,4) = 1/0.1;
+//        Info(5,5) = 1/1.7976931348623157e+308;
+//        e->setInformation(Info);
+//        optimizer.addEdge(e);
+//    }
+#endif
 
     // Optimize!
     optimizer.initializeOptimization();
@@ -235,6 +354,11 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
             pMP->mnBAGlobalForKF = nLoopKF;
         }
     }
+
+#ifdef DOOM_GLOBAL
+    g2o::SE3Quat se3quat = vCalib->estimate();
+    cout << "This loop, calibration result is :" << se3quat << endl;
+#endif
 
 }
 
@@ -459,6 +583,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
 
     lLocalKeyFrames.push_back(pKF);
     pKF->mnBALocalForKF = pKF->mnId;
+//    cout << "current ID:" << pKF->mnId << endl;
 
     const vector<KeyFrame*> vNeighKFs = pKF->GetVectorCovisibleKeyFrames();
     for(int i=0, iend=vNeighKFs.size(); i<iend; i++)
@@ -505,6 +630,9 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         }
     }
 
+    lLocalKeyFrames.sort(KeyFrame::lId);
+    lFixedCameras.sort(KeyFrame::lId);
+
     // Setup optimizer
     g2o::SparseOptimizer optimizer;
     g2o::BlockSolver_6_3::LinearSolverType * linearSolver;
@@ -521,18 +649,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
 
     unsigned long maxKFid = 0;
 
-    // Set Local KeyFrame vertices
-    for(list<KeyFrame*>::iterator lit=lLocalKeyFrames.begin(), lend=lLocalKeyFrames.end(); lit!=lend; lit++)
-    {
-        KeyFrame* pKFi = *lit;
-        g2o::VertexSE3Expmap * vSE3 = new g2o::VertexSE3Expmap();
-        vSE3->setEstimate(Converter::toSE3Quat(pKFi->GetPose()));
-        vSE3->setId(pKFi->mnId);
-        vSE3->setFixed(pKFi->mnId==0);
-        optimizer.addVertex(vSE3);
-        if(pKFi->mnId>maxKFid)
-            maxKFid=pKFi->mnId;
-    }
+    vector<KeyFrame*> vertexKF;
+    vector<g2o::VertexSE3Expmap *> vertexV;
 
     // Set Fixed KeyFrame vertices
     for(list<KeyFrame*>::iterator lit=lFixedCameras.begin(), lend=lFixedCameras.end(); lit!=lend; lit++)
@@ -541,11 +659,55 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         g2o::VertexSE3Expmap * vSE3 = new g2o::VertexSE3Expmap();
         vSE3->setEstimate(Converter::toSE3Quat(pKFi->GetPose()));
         vSE3->setId(pKFi->mnId);
+//        cout << "add fixed frame ID: " << pKFi->mnId << endl;
         vSE3->setFixed(true);
         optimizer.addVertex(vSE3);
-        if(pKFi->mnId>maxKFid)
+        vertexV.push_back(vSE3);
+        vertexKF.push_back(pKFi);
+        if((pKFi->mnId)>maxKFid)
             maxKFid=pKFi->mnId;
     }
+
+    // Set Local KeyFrame vertices
+    for(list<KeyFrame*>::iterator lit=lLocalKeyFrames.begin(), lend=lLocalKeyFrames.end(); lit!=lend; lit++)
+    {
+        KeyFrame* pKFi = *lit;
+        g2o::VertexSE3Expmap * vSE3 = new g2o::VertexSE3Expmap();
+        vSE3->setEstimate(Converter::toSE3Quat(pKFi->GetPose()));
+        vSE3->setId(pKFi->mnId );
+//        cout << "add local frame ID: " << pKFi->mnId << endl;
+        vSE3->setFixed((pKFi->mnId)==0);
+        optimizer.addVertex(vSE3);
+        vertexV.push_back(vSE3);
+        vertexKF.push_back(pKFi);
+        if((pKFi->mnId)>maxKFid)
+            maxKFid=pKFi->mnId;
+    }
+
+#ifdef DOOM_LOCAL
+    // add calibration node
+    g2o::VertexSE3Expmap* vCalib = new g2o::VertexSE3Expmap;
+    if(notInitCalib)
+    {
+        notInitCalib = false;
+        Eigen::Matrix3d priorR = Eigen::Matrix3d::Identity();
+//        priorR.row(0) = Eigen::Vector3d(0,-1,0);
+//        priorR.row(1) = Eigen::Vector3d(0,0,-1);
+//        priorR.row(2) = Eigen::Vector3d(1,0,0);
+//        calibEst = g2o::SE3Quat(priorR, Eigen::Vector3d(0.06,0,-0.125));
+        calibEst = g2o::SE3Quat(priorR, Eigen::Vector3d());
+        vCalib->setEstimate(calibEst);
+    }
+    else
+    {
+        vCalib->setEstimate(calibEst);
+    }
+    cout << "before online optimize :" << calibEst << endl;
+    int id_ = 99999999;
+    vCalib->setId(id_);
+//    vCalib->setFixed(true);
+    optimizer.addVertex(vCalib);
+#endif
 
     // Set MapPoint vertices
     const int nExpectedSize = (lLocalKeyFrames.size()+lFixedCameras.size())*lLocalMapPoints.size();
@@ -581,6 +743,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         g2o::VertexSBAPointXYZ* vPoint = new g2o::VertexSBAPointXYZ();
         vPoint->setEstimate(Converter::toVector3d(pMP->GetWorldPos()));
         int id = pMP->mnId+maxKFid+1;
+//        cout << "add " << id << "th map point" << endl;
         vPoint->setId(id);
         vPoint->setMarginalized(true);
         optimizer.addVertex(vPoint);
@@ -658,44 +821,150 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         }
     }
 
-#ifdef DOOM
-    g2o::VertexSE3Expmap* vCalib = new g2o::VertexSE3Expmap;
-    vCalib->setEstimate(g2o::SE3Quat(Eigen::Matrix3d::Identity(), Eigen::Vector3d(0.06,0,-0.12)));
-    int id_ = 99999999;
-    vCalib->setId(id_);
-    optimizer.addVertex(vCalib);
-    for(list<KeyFrame*>::iterator lit=lLocalKeyFrames.begin(), lend=lLocalKeyFrames.end(); lit!=lend; lit++)
+#ifdef DOOM_LOCAL
+//    g2o::VertexSE3Expmap* vCalib = new g2o::VertexSE3Expmap;
+//    Eigen::Matrix3d priorR = Eigen::Matrix3d::Identity();
+//    priorR.col(0) = Eigen::Vector3d(0,-1,0);
+//    priorR.col(1) = Eigen::Vector3d(0,0,-1);
+//    priorR.col(2) = Eigen::Vector3d(1,0,0);
+//    vCalib->setEstimate(g2o::SE3Quat(priorR, Eigen::Vector3d(0.06,0,-0.125)));
+//    cout << "before online optimize :" << g2o::SE3Quat(priorR, Eigen::Vector3d(0.06,0,-0.125)) << endl;
+//    int id_ = 9999999;
+//    vCalib->setId(id_);
+//    vCalib->setFixed(true);
+//    optimizer.addVertex(vCalib);
+
+    // add calibration edges
+    cout << "add calibration edges " << endl;
+    vector<g2o::VertexBias*> vvBias;
+    for(int i = 0; i < vertexV.size() - 1; i++)
     {
-        KeyFrame* pKFi = *lit;
-        g2o::EdgeSE3Calib* e = new g2o::EdgeSE3Calib;
-        e->setVertex(0,dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKFi->mnId)));
-        e->setVertex(1,vCalib);
-        Eigen::AngleAxisd rotz(pKFi->odomtheta, Eigen::Vector3d::UnitZ());
-        Eigen::Matrix3d rot = rotz.toRotationMatrix();
-        Eigen::Vector3d tras(pKFi->odomx, pKFi->odomy, 0);
-        g2o::SE3Quat meas(rot, tras);
+        KeyFrame* lastKF = vertexKF[i];
+        KeyFrame* curKF = vertexKF[i+1];
+        g2o::VertexSE3Expmap* lastV = vertexV[i];
+        g2o::VertexSE3Expmap* curV = vertexV[i+1];
+
+//        vector<pair<double, double>> gyrodata;
+//        getClosestGyro(lastKF->_timestep, curKF->_timestep, gyrodata);
+
+//        cout << "set bias vertex" << endl;
+//        g2o::VertexBias* vBias = new g2o::VertexBias;
+//        if(notInitBias)
+//        {
+//            lastKF->_bias.setZero();
+//            vBias->setEstimate(lastKF->_bias);
+//        }
+//        else
+//        {
+//            vBias->setEstimate(lastKF->_bias);
+//        }
+//        int id_1 = id_ + lastKF->mnId + 1;
+//        vBias->setId(id_1);
+//        optimizer.addVertex(vBias);
+//        vvBias.push_back(vBias);
+
+//        Eigen::Quaterniond q_est;
+//        Eigen::Matrix3d info;
+//        Eigen::Matrix3d bias_jac;
+//        Preintegrator::getPreintResult(gyrodata,
+//                                       lastV->estimate().rotation(),
+//                                       lastKF->_bias,
+//                                       q_est,
+//                                       info,
+//                                       bias_jac);
+//        cout << "preintegration estimation " << q_est.x() << " " << q_est.y() << " "
+//             << q_est.z() << " " << q_est.w() << endl;
+//        cout << "info matrix " << info << endl;
+//        cout << "bias jacobian " << bias_jac << endl;
+//        cout << "after calc preinte" << endl;
+        // set bias vertex
+
+        // calibration edge
+        g2o::EdgeSE3Calib* e = new g2o::EdgeSE3Calib();
+        e->resize(3);
+        e->vertices()[0] = lastV;
+        e->vertices()[1] = curV;
+        e->vertices()[2] = vCalib;
+        Eigen::AngleAxisd last_rotz(lastKF->odomtheta, Eigen::Vector3d::UnitZ());
+        Eigen::AngleAxisd cur_rotz(curKF->odomtheta, Eigen::Vector3d::UnitZ());
+        Eigen::Matrix3d last_rot = last_rotz.toRotationMatrix();
+        Eigen::Matrix3d cur_rot = cur_rotz.toRotationMatrix();
+        Eigen::Vector3d last_tras(lastKF->odomx, lastKF->odomy, 0);
+        Eigen::Vector3d cur_tras(curKF->odomx, curKF->odomy, 0);
+        g2o::SE3Quat last_pose(last_rot, last_tras);
+        g2o::SE3Quat cur_pose(cur_rot, cur_tras);
+        g2o::SE3Quat meas = cur_pose*last_pose.inverse();
         e->setMeasurement(meas);
         g2o::Matrix6d Info = g2o::Matrix6d::Identity();
+        Info(0,0) = 1/1.7976931348623157e+308;
+        Info(1,1) = 1/1.7976931348623157e+308;
+        Info(2,2) = 1/0.2;
+        Info(3,3) = 1/0.1;
+        Info(4,4) = 1/0.1;
+        Info(5,5) = 1/1.7976931348623157e+308;
         e->setInformation(Info);
         optimizer.addEdge(e);
         vpEdgesSe3Calib.push_back(e);
+
+//        // preintegration edge
+//        cout << "set preint edge" << endl;
+//        g2o::EdgePreint* e1 = new g2o::EdgePreint;
+//        e1->resize(3);
+//        e1->vertices()[0] = lastV;
+//        e1->vertices()[1] = curV;
+//        e1->vertices()[2] = vBias;
+//        e1->bias_bar = lastKF->_bias;
+//        e1->jaccobian = bias_jac;
+//        e1->setMeasurement(g2o::getVectorJPL(q_est));
+//        e1->setInformation(info);
+//        optimizer.addEdge(e1);
+//        cout << "after set all factor" << endl;
     }
-    for(list<KeyFrame*>::iterator lit=lFixedCameras.begin(), lend=lFixedCameras.end(); lit!=lend; lit++)
-    {
-        KeyFrame* pKFi = *lit;
-        g2o::EdgeSE3Calib* e = new g2o::EdgeSE3Calib;
-        e->setVertex(0,dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKFi->mnId)));
-        e->setVertex(1,vCalib);
-        Eigen::AngleAxisd rotz(pKFi->odomtheta, Eigen::Vector3d::UnitZ());
-        Eigen::Matrix3d rot = rotz.toRotationMatrix();
-        Eigen::Vector3d tras(pKFi->odomx, pKFi->odomy, 0);
-        g2o::SE3Quat meas(rot, tras);
-        e->setMeasurement(meas);
-        g2o::Matrix6d Info = g2o::Matrix6d::Identity();
-        e->setInformation(Info);
-        optimizer.addEdge(e);
-        vpEdgesSe3Calib.push_back(e);
-    }
+    if(notInitBias)
+        notInitBias = false;
+
+//        KeyFrame* pKFi = *lit;
+//        g2o::EdgeSE3Calib* e = new g2o::EdgeSE3Calib;
+//        e->setVertex(0,dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKFi->mnId)));
+//        e->setVertex(1,vCalib);
+//        Eigen::AngleAxisd rotz(pKFi->odomtheta, Eigen::Vector3d::UnitZ());
+//        Eigen::Matrix3d rot = rotz.toRotationMatrix();
+//        Eigen::Vector3d tras(pKFi->odomx, pKFi->odomy, 0);
+//        g2o::SE3Quat meas(rot, tras);
+//        e->setMeasurement(meas);
+//        g2o::Matrix6d Info = g2o::Matrix6d::Identity();
+//        Info(0,0) = 1/1.7976931348623157e+308;
+//        Info(1,1) = 1/1.7976931348623157e+308;
+//        Info(2,2) = 1/0.2;
+//        Info(3,3) = 1/0.1;
+//        Info(4,4) = 1/0.1;
+//        Info(5,5) = 1/1.7976931348623157e+308;
+//        e->setInformation(Info);
+//        optimizer.addEdge(e);
+//        vpEdgesSe3Calib.push_back(e);
+//    }
+//    for(list<KeyFrame*>::iterator lit=lFixedCameras.begin(), lend=lFixedCameras.end(); lit!=lend; lit++)
+//    {
+//        KeyFrame* pKFi = *lit;
+//        g2o::EdgeSE3Calib* e = new g2o::EdgeSE3Calib;
+//        e->setVertex(0,dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKFi->mnId)));
+//        e->setVertex(1,vCalib);
+//        Eigen::AngleAxisd rotz(pKFi->odomtheta, Eigen::Vector3d::UnitZ());
+//        Eigen::Matrix3d rot = rotz.toRotationMatrix();
+//        Eigen::Vector3d tras(pKFi->odomx, pKFi->odomy, 0);
+//        g2o::SE3Quat meas(rot, tras);
+//        e->setMeasurement(meas);
+//        g2o::Matrix6d Info = g2o::Matrix6d::Identity();
+//        Info(0,0) = 1/1.7976931348623157e+308;
+//        Info(1,1) = 1/1.7976931348623157e+308;
+//        Info(2,2) = 1/0.2;
+//        Info(3,3) = 1/0.1;
+//        Info(4,4) = 1/0.1;
+//        Info(5,5) = 1/1.7976931348623157e+308;
+//        e->setInformation(Info);
+//        optimizer.addEdge(e);
+//        vpEdgesSe3Calib.push_back(e);
+//    }
 #endif
 
     if(pbStopFlag)
@@ -746,18 +1015,18 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
 
         e->setRobustKernel(0);
     }
-#ifdef DOOM
-    for(size_t i=0, iend=vpEdgesSe3Calib.size(); i<iend;i++)
-    {
-        g2o::EdgeSE3Calib* e = vpEdgesSe3Calib[i];
+#ifdef DOOM_LOCAL
+//    for(size_t i=0, iend=vpEdgesSe3Calib.size(); i<iend;i++)
+//    {
+//        g2o::EdgeSE3Calib* e = vpEdgesSe3Calib[i];
 
-        if(e->chi2()>7.815)
-        {
-            e->setLevel(1);
-        }
+//        if(e->chi2()>7.815)
+//        {
+//            e->setLevel(1);
+//        }
 
-        e->setRobustKernel(0);
-    }
+//        e->setRobustKernel(0);
+//    }
 #endif
 
     // Optimize again without the outliers
@@ -835,9 +1104,20 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         pMP->UpdateNormalAndDepth();
     }
 
-#ifdef DOOM
+#ifdef DOOM_LOCAL
     g2o::SE3Quat se3quat = vCalib->estimate();
     cout << "This loop, calibration result is :" << se3quat << endl;
+    calibEst = se3quat;
+//    for(int i = 0; i < vvBias.size(); i++)
+//    {
+//        int kf_id = vvBias[i]->id() - id_ - 1;
+//        if(kf_id != vertexKF[i]->mnId)
+//        {
+//            cerr << "bias id not match the kf's" << endl;
+//            continue;
+//        }
+//        vertexKF[i]->_bias = vvBias[i]->estimate();
+//    }
 #endif
 }
 

@@ -29,6 +29,8 @@
 #include "Frame.h"
 #include "KeyFrameDatabase.h"
 
+#include <Eigen/Core>
+
 #include <mutex>
 
 
@@ -189,6 +191,10 @@ public:
     const cv::Mat mK;
 
     double odomx, odomy, odomtheta;
+
+    double _timestep;
+
+    Eigen::Vector3d _bias;
 
     // The following variables need to be accessed trough a mutex to be thread safe.
 protected:

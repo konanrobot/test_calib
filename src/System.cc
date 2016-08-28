@@ -22,6 +22,7 @@
 
 #include "System.h"
 #include "Converter.h"
+#include "Optimizer.h"
 #include <thread>
 #include <pangolin/pangolin.h>
 #include <iomanip>
@@ -421,6 +422,14 @@ void System::SaveTrajectoryKITTI(const string &filename)
     }
     f.close();
     cout << endl << "trajectory saved!" << endl;
+}
+
+void System::DoOnlineCalibration()
+{
+    cout << "Starting Online Calibration." << endl;
+
+    Optimizer::GlobalBundleAdjustemnt(mpMap,20);
+
 }
 
 } //namespace ORB_SLAM

@@ -110,6 +110,8 @@ public:
     // SaveMap(const string &filename);
     // LoadMap(const string &filename);
 
+    void DoOnlineCalibration();
+
 private:
 
     // Input sensor
