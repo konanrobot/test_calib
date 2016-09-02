@@ -69,6 +69,21 @@ bool VertexSE3Expmap::write(std::ostream& os) const {
   return os.good();
 }
 
+//VertexSE3JPL::VertexSE3JPL() : BaseVertex<3, SE3JPL>() {
+//}
+
+//bool VertexSE3JPL::read(std::istream& is)
+//{
+//  (void) is;
+//  return false;
+//}
+
+//bool VertexSE3JPL::write(std::ostream& os) const
+//{
+//  (void) os;
+//  return false;
+//}
+
 VertexBias::VertexBias() : BaseVertex<3, Vector3d>() {
 }
 
@@ -377,6 +392,60 @@ void EdgeStereoSE3ProjectXYZOnlyPose::linearizeOplus() {
   _jacobianOplusXi(2,5) = _jacobianOplusXi(0,5)-bf*invz_2;
 }
 
+EdgeSE3Odom::EdgeSE3Odom()
+{
+}
+
+bool EdgeSE3Odom::read(std::istream& is)
+{
+  (void) is;
+  return false;
+}
+
+bool EdgeSE3Odom::write(std::ostream& os) const
+{
+  (void) os;
+  return false;
+}
+
+void EdgeSE3Odom::computeError()
+{
+//  // K_T_G previous camera pose
+//  const VertexSE3Expmap* lastCamNode = static_cast<const VertexSE3Expmap*>(_vertices[0]);
+//  // K+1_T_G current camera pose
+//  const VertexSE3Expmap* curCamNode = static_cast<const VertexSE3Expmap*>(_vertices[1]);
+
+//  SE3Quat temp = (Tco.inverse()*curCamNode->estimate()
+//                               *lastCamNode->estimate()*Tco)*measurement().inverse();
+//  _error = temp.log();
+
+    const VertexSE3Expmap* v1 = static_cast<const VertexSE3Expmap*>(_vertices[0]);
+    const VertexSE3Expmap* v2 = static_cast<const VertexSE3Expmap*>(_vertices[1]);
+
+    SE3Quat C(_measurement);
+    SE3Quat error_= v2->estimate().inverse()*C*v1->estimate();
+    _error = error_.log();
+
+}
+
+void EdgeSE3Odom::linearizeOplus()
+{
+  VertexSE3Expmap * vi = static_cast<VertexSE3Expmap *>(_vertices[0]);
+  SE3Quat Ti(vi->estimate());
+
+  VertexSE3Expmap * vj = static_cast<VertexSE3Expmap *>(_vertices[1]);
+  SE3Quat Tj(vj->estimate());
+
+  const SE3Quat & Tij = _measurement;
+  SE3Quat invTij = Tij.inverse();
+
+  SE3Quat invTj_Tij = Tj.inverse()*Tij;
+  SE3Quat infTi_invTij = Ti.inverse()*invTij;
+
+  _jacobianOplusXi = invTj_Tij.adj();
+  _jacobianOplusXj = -infTi_invTij.adj();
+}
+
 EdgeSE3Calib::EdgeSE3Calib()
 {
 }
@@ -419,41 +488,18 @@ void EdgeSE3Calib::computeError()
   // Calib offset between camera and odometry
   const VertexSE3Expmap* offsetNode = static_cast<const VertexSE3Expmap*>(_vertices[2]);
 
-//  Eigen::Quaterniond lastQ = lastCamNode->estimate().rotation();
-//  Eigen::Quaterniond curQ = curCamNode->estimate().rotation();
-//  Eigen::Quaterniond offsetQ = offsetNode->estimate().rotation();
-//  Eigen::Quaterniond odomQ = measurement().rotation();
-
-//  Eigen::Quaterniond temp1 = LeftTimes(inverseJPL(offsetQ),curQ);
-//  Eigen::Quaterniond temp2 = LeftTimes(temp1,inverseJPL(lastQ));
-//  Eigen::Quaterniond temp3 = LeftTimes(temp2,offsetQ);
-//  Eigen::Quaterniond result = LeftTimes(temp3,inverseJPL(odomQ));
-
-//  Eigen::Vector3d delta_t = getVectorJPL(result);
-
-//  Eigen::Matrix3d cc = toRotationMatJPL(curQ)*toRotationMatJPL(lastQ).transpose();
-//  Eigen::Matrix3d co = toRotationMatJPL(offsetQ);
-//  Eigen::Matrix3d I = Eigen::Matrix3d::Identity();
-//  Eigen::Vector3d pco = offsetNode->estimate().translation();
-//  Eigen::Vector3d pc1 = curCamNode->estimate().translation();
-//  Eigen::Vector3d pc0 = lastCamNode->estimate().translation();
-//  Eigen::Vector3d poo = measurement().translation();
-//  Eigen::Vector3d vresult = co.transpose()*((cc-I)*pco+pc1-cc*pc0)-poo;
-
-//  g2o::Vector6d temp;
-//  for(int i = 0; i < 3; i++)
-//      temp[i] = delta_t[i];
-//  for(int i = 0; i < 3; i++)
-//      temp[i+3] = vresult[i];
-
-//  _error = temp;
-
   // delta T between two camera
   const SE3Quat& Tcl = curCamNode->estimate() * lastCamNode->estimate().inverse();
 
 //   measurement = K+1_T_k, transformation between last and current odometry frame.
 //   offsetNode is the estimation of calibration between stereo and odom.
-  SE3Quat temp = measurement().inverse()*(offsetNode->estimate().inverse()*Tcl*offsetNode->estimate());
+  SE3Quat temp = (offsetNode->estimate().inverse()*Tcl*offsetNode->estimate())*measurement().inverse();
+//  SE3Quat temp = measurement().inverse()*(offsetNode->estimate()*Tcl*offsetNode->estimate().inverse());
+//  g2o::Vector6d before = temp.log();
+//  before[0] = 0;
+//  before[2] = 0;
+//  before[4] = 0;
+//  _error = before;
   _error = temp.log();
 }
 
@@ -482,29 +528,64 @@ void EdgePreint::computeError()
   // bias node
   const VertexBias* biasNode = static_cast<const VertexBias*>(_vertices[2]);
 
-//  GyroPreint meas = measurement();
-//  Eigen::Quaterniond q_est = meas.estimation();
-//  Eigen::Matrix3d jaccobian = meas.jacobian();
-//  bias_bar = meas.bias();
+  g2o::Vector6d tempv = measurement().toMinimalVector();
+  Eigen::Vector3d miniV(tempv[3], tempv[4], tempv[5]);
 
-  Eigen::Quaterniond k_1_q = curCamNode->estimate().rotation();
-  Eigen::Quaterniond k_q = lastCamNode->estimate().rotation();
-  Eigen::Quaterniond k_q_T = k_q.inverse();
-  Eigen::Vector3d bias = biasNode->estimate();
+   Eigen::Vector3d omega = (miniV - biasNode->estimate())*delta_t;
+   Eigen::Matrix<double, 6, 1> vv;
+   vv.setZero();
+   for(int i = 0; i < 3; i++)
+   {
+       vv[i] = omega[i];
+   }
+   SE3Quat ZR = SE3Quat::exp(vv);
+   SE3Quat temp = ZR.inverse() * curCamNode->estimate() * lastCamNode->estimate().inverse();
 
-  Eigen::Quaterniond q1 = LeftTimes(k_1_q, k_q_T);
-  Eigen::Quaterniond q2 = LeftTimes(q1, convertJPL(measurement()).inverse());
-  Eigen::Vector3d biasv = 0.5*jaccobian*(bias-bias_bar);
-  Eigen::Quaterniond q3;
-  q3.x() = biasv[0]; q3.y() = biasv[1]; q3.z() = biasv[2];
-  q3.w() = 1;
-  Eigen::Quaterniond q4 = LeftTimes(q2, q3);
-  Eigen::Vector3d delta_theta = getVectorJPL(q4);
-  Eigen::Vector3d e;
-  e << delta_theta;
-
-  _error = e;
+  _error = temp.log();
 }
+
+EdgeGyro::EdgeGyro()
+{
+}
+
+bool EdgeGyro::read(std::istream& is)
+{
+  (void) is;
+  return false;
+}
+
+bool EdgeGyro::write(std::ostream& os) const
+{
+  (void) os;
+  return false;
+}
+
+void EdgeGyro::computeError()
+{
+  // last camera pose
+  const VertexSE3Expmap* lastCamNode = static_cast<const VertexSE3Expmap*>(_vertices[0]);
+  // current camera pose
+  const VertexSE3Expmap* curCamNode = static_cast<const VertexSE3Expmap*>(_vertices[1]);
+
+  g2o::Vector6d tempv = measurement().toMinimalVector();
+  Eigen::Vector3d miniV(tempv[3], tempv[4], tempv[5]);
+
+   Eigen::Vector3d omega = miniV*delta_t;
+   Eigen::Matrix<double, 6, 1> vv;
+   vv.setZero();
+   for(int i = 0; i < 3; i++)
+   {
+       vv[i] = omega[i];
+   }
+   SE3Quat ZR = SE3Quat::exp(vv);
+   SE3Quat temp = ZR.inverse() * curCamNode->estimate() * lastCamNode->estimate().inverse();
+
+  _error = temp.log();
+}
+
+}// end namespace
+
+
 
 //void EdgePreint::linearizeOplus()
 //{
@@ -767,4 +848,3 @@ void EdgePreint::computeError()
 //  v->setEstimate(newEstimate);
 //}
 
-} // end namespace

@@ -33,7 +33,8 @@ using namespace std;
 #define DO_CALIB
 
 void LoadImages(const string &strPathToSequence, vector<string> &vstrImageLeft,
-                vector<string> &vstrImageRight, vector<double> &vTimestamps, vector<vector<double>> &vOdom);
+                vector<string> &vstrImageRight, vector<double> &vTimestamps, vector<vector<double>> &vOdom,
+                vector<pair<double, double>> &vWheel);
 
 int main(int argc, char **argv)
 {
@@ -48,7 +49,8 @@ int main(int argc, char **argv)
     vector<string> vstrImageRight;
     vector<double> vTimestamps;
     vector<vector<double>> vOdom;
-    LoadImages(string(argv[3]), vstrImageLeft, vstrImageRight, vTimestamps, vOdom);
+    vector<pair<double, double>> vWheel;
+    LoadImages(string(argv[3]), vstrImageLeft, vstrImageRight, vTimestamps, vOdom, vWheel);
 
     const int nImages = vstrImageLeft.size();
 
@@ -72,6 +74,7 @@ int main(int argc, char **argv)
         imRight = cv::imread(vstrImageRight[ni],CV_LOAD_IMAGE_UNCHANGED);
         double tframe = vTimestamps[ni];
         vector<double> vOdo = vOdom[ni];
+        pair<double, double> vpair = vWheel[ni];
 
         if(imLeft.empty())
         {
@@ -87,7 +90,7 @@ int main(int argc, char **argv)
 #endif
 
         // Pass the images to the SLAM system
-        SLAM.TrackStereo(imLeft,imRight,tframe, vOdo);
+        SLAM.TrackStereo(imLeft,imRight,tframe, vOdo, vpair);
 
 #ifdef COMPILEDWITHC11
         std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
@@ -135,13 +138,16 @@ int main(int argc, char **argv)
 }
 
 void LoadImages(const string &strPathToSequence, vector<string> &vstrImageLeft,
-                vector<string> &vstrImageRight, vector<double> &vTimestamps, vector<vector<double>> &vOdom)
+                vector<string> &vstrImageRight, vector<double> &vTimestamps, vector<vector<double>> &vOdom,
+                vector<pair<double, double>> &vWheel)
 {
-    ifstream fTimes, fOdoms;
+    ifstream fTimes, fOdoms, fWheel;
     string strPathTimeFile = strPathToSequence + "/times.txt";
     string strPathOdomFile = strPathToSequence + "/closestodom.txt";
+    string strPathWheelFile = strPathToSequence + "/closestwheel.txt";
     fTimes.open(strPathTimeFile.c_str());
     fOdoms.open(strPathOdomFile.c_str());
+    fWheel.open(strPathWheelFile.c_str());
     while(!fTimes.eof())
     {
         string s;
@@ -166,6 +172,17 @@ void LoadImages(const string &strPathToSequence, vector<string> &vstrImageLeft,
         fOdoms >> theta;
         temp.push_back(x); temp.push_back(y); temp.push_back(theta);
         vOdom.push_back(temp);
+    }
+    for(int i = 0; i < vTimestamps.size(); i++)
+    {
+        double time, vl, vr;
+        pair<double, double> temp;
+
+        fWheel >> time;
+        fWheel >> vl;
+        fWheel >> vr;
+        temp.first = vl; temp.second = vr;
+        vWheel.push_back(temp);
     }
 
     string strPrefixLeft = strPathToSequence + "/image_0/";

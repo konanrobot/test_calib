@@ -196,6 +196,10 @@ public:
 
     Eigen::Vector3d _bias;
 
+    double vl, vr;
+
+    Eigen::Matrix3d P, P_del;
+
     // The following variables need to be accessed trough a mutex to be thread safe.
 protected:
 

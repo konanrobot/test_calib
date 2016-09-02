@@ -63,6 +63,21 @@ namespace g2o
     }
 
     ///
+    /// @brief convert a small vector to quaternion
+    /// @param _v rotation vector
+    ///
+    inline Eigen::Quaterniond convertSmallJPL(const Eigen::Vector3d &_v)
+    {
+        Eigen::Quaterniond _r;
+        for(int i =0; i < 3; i++)
+        {
+           _r.coeffs()(i)=0.5*_v[i];
+        }
+        _r.w() = 1;
+        return _r;
+    }
+
+    ///
     /// @brief get skew matrix with JPL format
     /// @param v 3*1 vector, output 3*3 matrix
     ///
@@ -198,6 +213,40 @@ namespace g2o
               - ((1-cos(phi.norm()))/std::pow(phi.norm(),2))*skewJPL(phi)
               + ((phi.norm() - sin(phi.norm()))/std::pow(phi.norm(),3))
                 *skewJPL(phi)*skewJPL(phi)).finished();
+    }
+
+    inline Eigen::Quaterniond fromRotationMatJPL(
+            Eigen::Matrix3d &mat)
+    {
+        Eigen::Quaterniond q;
+        double t = mat.trace();
+        if (t > 0.0)
+        {
+          t = sqrt(t + 1.0);
+          q.w() = 0.5*t;
+          t = 0.5/t;
+          q.x() = (mat.coeff(1,2) - mat.coeff(2,1)) * t;
+          q.y() = (mat.coeff(2,0) - mat.coeff(0,2)) * t;
+          q.z() = (mat.coeff(0,1) - mat.coeff(1,0)) * t;
+        }
+        else
+        {
+          int i = 0;
+          if (mat.coeff(1,1) > mat.coeff(0,0))
+            i = 1;
+          if (mat.coeff(2,2) > mat.coeff(i,i))
+            i = 2;
+          int j = (i+1)%3;
+          int k = (j+1)%3;
+
+          t = sqrt(mat.coeff(i,i)-mat.coeff(j,j)-mat.coeff(k,k) + 1.0);
+          q.coeffs().coeffRef(i) = 0.5 * t;
+          t = 0.5/t;
+          q.w() = (mat.coeff(j,k)-mat.coeff(k,j))*t;
+          q.coeffs().coeffRef(j) = (mat.coeff(j,i)+mat.coeff(i,j))*t;
+          q.coeffs().coeffRef(k) = (mat.coeff(k,i)+mat.coeff(i,k))*t;
+        }
+        return q;
     }
 }
 

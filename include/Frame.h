@@ -189,6 +189,8 @@ public:
 
     float odomx, odomy, odomtheta;
 
+    double vl, vr;
+
 private:
 
     // Undistort keypoints given OpenCV distortion parameters.

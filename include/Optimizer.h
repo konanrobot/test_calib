@@ -46,6 +46,8 @@ public:
     void static LocalBundleAdjustment(KeyFrame* pKF, bool *pbStopFlag, Map *pMap);
     int static PoseOptimization(Frame* pFrame);
 
+    int static VinsOptimization(Frame* Last, Frame* pFrame, g2o::Matrix6d &cov, g2o::SE3Quat &meas);
+
     // if bFixScale is true, 6DoF optimization (stereo,rgbd), 7DoF otherwise (mono)
     void static OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* pCurKF,
                                        const LoopClosing::KeyFrameAndPose &NonCorrectedSim3,
@@ -59,6 +61,9 @@ public:
     bool static notInitCalib;
     static g2o::SE3Quat calibEst;
     bool static notInitBias;
+    static ofstream* in;
+
+    static Eigen::Matrix3d P, P_k, P_k_1;
 
     void static getClosestGyro(double &lasttime, double &curtime, vector<pair<double, double>> &gyrodata);
 };

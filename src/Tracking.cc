@@ -26,7 +26,6 @@
 
 #include"ORBmatcher.h"
 #include"FrameDrawer.h"
-#include"Converter.h"
 #include"Map.h"
 #include"Initializer.h"
 
@@ -49,6 +48,25 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpMap(pMap), mnLastRelocFrameId(0)
 {
     // Load camera parameters from settings file
+    Eigen::Matrix3d priorR = Eigen::Matrix3d::Identity();
+    priorR.row(0) = Eigen::Vector3d(-0.0134899,-0.997066,0.0753502);
+    priorR.row(1) = Eigen::Vector3d(-0.0781018,-0.0740761,-0.99419);
+    priorR.row(2) = Eigen::Vector3d(0.996854,-0.0192965,-0.0768734);
+    Tco = g2o::SE3Quat(priorR, Eigen::Vector3d(0.056829,0.522781,-0.134488));
+
+    // P at time 0
+    P = g2o::Matrix6d::Zero();
+    P(0,0) = 0.00000001;
+    P(1,1) = 0.00000001;
+    P(5,5) = 0.00000001;
+    P(2,2) = 999999999;
+    P(3,3) = 999999999;
+    P(4,4) = 999999999;
+
+    P_k = P;
+    P_k_1 = P;
+
+    Vodom.setZero();
 
     cv::FileStorage fSettings(strSettingPath, cv::FileStorage::READ);
     float fx = fSettings["Camera.fx"];
@@ -164,7 +182,7 @@ void Tracking::SetViewer(Viewer *pViewer)
 }
 
 
-cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp, const vector<double> &Odom)
+cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp, const vector<double> &Odom, const pair<double, double> &wheel)
 {
     mImGray = imRectLeft;
     cv::Mat imGrayRight = imRectRight;
@@ -198,6 +216,7 @@ cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRe
 
     mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth);
     mCurrentFrame.odomx = Odom[0]; mCurrentFrame.odomy = Odom[1]; mCurrentFrame.odomtheta = Odom[2];
+    mCurrentFrame.vl = wheel.first; mCurrentFrame.vr = wheel.second;
 
     Track();
 
@@ -305,13 +324,14 @@ void Tracking::Track()
                 // Local Mapping might have changed some MapPoints tracked in last frame
                 CheckReplacedInLastFrame();
 
-                if(mVelocity.empty() || mCurrentFrame.mnId<mnLastRelocFrameId+2)
+                if(/*mVelocity.empty() ||*/ mCurrentFrame.mnId<mnLastRelocFrameId+2)
                 {
                     bOK = TrackReferenceKeyFrame();
                 }
                 else
                 {
                     bOK = TrackWithMotionModel();
+//                    bOK = TrackOdom();
                     if(!bOK)
                         bOK = TrackReferenceKeyFrame();
                 }
@@ -432,7 +452,7 @@ void Tracking::Track()
             else
                 mVelocity = cv::Mat();
 
-            mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw);
+            mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw, mCurrentFrame.mTimeStamp);
 
             // Clean temporal point matches
             for(int i=0; i<mCurrentFrame.N; i++)
@@ -504,7 +524,6 @@ void Tracking::Track()
         mlFrameTimes.push_back(mlFrameTimes.back());
         mlbLost.push_back(mState==LOST);
     }
-
 }
 
 
@@ -556,7 +575,7 @@ void Tracking::StereoInitialization()
 
         mpMap->mvpKeyFrameOrigins.push_back(pKFini);
 
-        mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw);
+        mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw, mCurrentFrame.mTimeStamp);
 
         mState=OK;
     }
@@ -731,7 +750,7 @@ void Tracking::CreateInitialMapMonocular()
 
     mpMap->SetReferenceMapPoints(mvpLocalMapPoints);
 
-    mpMapDrawer->SetCurrentCameraPose(pKFcur->GetPose());
+    mpMapDrawer->SetCurrentCameraPose(pKFcur->GetPose(), pKFcur->_timestep);
 
     mpMap->mvpKeyFrameOrigins.push_back(pKFini);
 
@@ -874,6 +893,49 @@ bool Tracking::TrackWithMotionModel()
     // Create "visual odometry" points
     UpdateLastFrame();
 
+//    vector<pair<double,pair<double,double>>> wheel;
+//    getWheelDatas(mLastFrame.mTimeStamp, mCurrentFrame.mTimeStamp,
+//                  wheel);
+//    double dx, dy, dtheta;
+//    g2o::Matrix6d Phi = g2o::Matrix6d::Identity();
+//    for(int i = 0; i < wheel.size(); i++)
+//    {
+//        double dt = wheel[i].first - mLastFrame.mTimeStamp;
+//        double vlm = wheel[i].second.first*0.035;
+//        double vrm = wheel[i].second.second*0.035;
+//        double sigmal = 0.02*vlm;
+//        double sigmar = 0.02*vrm;
+//        double vm = (vlm+vrm)/2;
+//        double wm = (vrm-vlm)/0.23;
+//        dx += vm*dt*cos(Vodom[2]);
+//        dy += vm*dt*sin(Vodom[2]);
+//        dtheta += wm*dt;
+//        g2o::Matrix6d Phi1 = g2o::Matrix6d::Identity();
+//        Phi1(0,5) = -vm*dt*sin(Vodom[2]);
+//        Phi1(1,5) = vm*dt*cos(Vodom[2]);
+//        Phi = Phi1*Phi;
+//        Eigen::Matrix<double, 6, 2> G = Eigen::Matrix<double, 6, 2>::Zero();
+//        G(0,0) = -dt*cos(Vodom[2]);
+//        G(1,0) = -dt*sin(Vodom[2]);
+//        G(5,1) = -dt;
+//        Eigen::Matrix2d Q = Eigen::Matrix2d::Zero();
+//        Q(0,0) = (sigmal*sigmal+sigmar*sigmar)/4;
+//        Q(0,1) = (sigmal*sigmal-sigmar*sigmar)/(2*0.23);
+//        Q(1,0) = (sigmal*sigmal-sigmar*sigmar)/(2*0.23);
+//        Q(1,1) = (sigmal*sigmal+sigmar*sigmar)/(0.23*0.23);
+//        P_k_1 = Phi1*P_k*Phi1.transpose() + G*Q*G.transpose();
+//    }
+//    Eigen::AngleAxisd rotz(dtheta, Eigen::Vector3d::UnitZ());
+//    dodom = g2o::SE3Quat(rotz.toRotationMatrix(),
+//                                      Eigen::Vector3d(dx,dy,0));
+//    g2o::SE3Quat dcam = Tco*dodom*Tco.inverse();
+
+//    Vodom[0] += dx;
+//    Vodom[1] += dy;
+//    Vodom[2] += dtheta;
+//    P_k = P_k_1;
+//    P = P_k + P_k_1 + Phi*P_k + P_k*Phi.transpose();
+
     mCurrentFrame.SetPose(mVelocity*mLastFrame.mTcw);
 
     fill(mCurrentFrame.mvpMapPoints.begin(),mCurrentFrame.mvpMapPoints.end(),static_cast<MapPoint*>(NULL));
@@ -929,6 +991,71 @@ bool Tracking::TrackWithMotionModel()
     return nmatchesMap>=10;
 }
 
+bool Tracking::TrackOdom()
+{
+//    ORBmatcher matcher(0.9,true);
+
+    // Update last frame pose according to its reference keyframe
+    // Create "visual odometry" points
+//    UpdateLastFrame();
+
+    mCurrentFrame.SetPose(mVelocity*mLastFrame.mTcw);
+
+//    fill(mCurrentFrame.mvpMapPoints.begin(),mCurrentFrame.mvpMapPoints.end(),static_cast<MapPoint*>(NULL));
+
+    // Project points seen in previous frame
+//    int th;
+//    if(mSensor!=System::STEREO)
+//        th=15;
+//    else
+//        th=7;
+//    int nmatches = matcher.SearchByProjection(mCurrentFrame,mLastFrame,th,mSensor==System::MONOCULAR);
+
+    // If few matches, uses a wider window search
+//    if(nmatches<20)
+//    {
+//        fill(mCurrentFrame.mvpMapPoints.begin(),mCurrentFrame.mvpMapPoints.end(),static_cast<MapPoint*>(NULL));
+//        nmatches = matcher.SearchByProjection(mCurrentFrame,mLastFrame,2*th,mSensor==System::MONOCULAR);
+//    }
+
+//    if(nmatches<20)
+//        return false;
+
+    // Optimize frame pose with all matches
+//    Optimizer::PoseOptimization(&mCurrentFrame);
+//    Optimizer::VinsOptimization(&mLastFrame,&mCurrentFrame);
+
+//    // Discard outliers
+//    int nmatchesMap = 0;
+//    for(int i =0; i<mCurrentFrame.N; i++)
+//    {
+//        if(mCurrentFrame.mvpMapPoints[i])
+//        {
+//            if(mCurrentFrame.mvbOutlier[i])
+//            {
+//                MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
+
+//                mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);
+//                mCurrentFrame.mvbOutlier[i]=false;
+//                pMP->mbTrackInView = false;
+//                pMP->mnLastFrameSeen = mCurrentFrame.mnId;
+//                nmatches--;
+//            }
+//            else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
+//                nmatchesMap++;
+//        }
+//    }
+
+//    if(mbOnlyTracking)
+//    {
+//        mbVO = nmatchesMap<10;
+//        return nmatches>20;
+//    }
+
+//    return nmatchesMap>=10;
+    true;
+}
+
 bool Tracking::TrackLocalMap()
 {
     // We have an estimation of the camera pose and some map points tracked in the frame.
@@ -940,6 +1067,7 @@ bool Tracking::TrackLocalMap()
 
     // Optimize Pose
     Optimizer::PoseOptimization(&mCurrentFrame);
+
     mnMatchesInliers = 0;
 
     // Update MapPoints Statistics
@@ -1598,6 +1726,32 @@ void Tracking::InformOnlyTracking(const bool &flag)
     mbOnlyTracking = flag;
 }
 
-
+void Tracking::getWheelDatas(double &lastT, double &curT,
+                             vector<pair<double,pair<double, double> > > &wheel)
+{
+    ifstream in("/home/doom/zed/wheel.txt");
+    for(int i = 0; i < 6637; i++){
+        double temp;
+        in >> temp;
+        if(temp > curT)
+            break;
+        if((temp >= lastT) && (temp <= curT))
+        {
+            pair<double, pair<double, double>> ptemp;
+            ptemp.first = temp;
+            pair<double, double> temp1;
+            in >> temp;
+            temp1.first = temp;
+            in >> temp;
+            temp1.second = temp;
+            ptemp.second = temp1;
+            wheel.push_back(ptemp);
+        }
+        else
+        {
+            in >> temp; in >> temp;
+        }
+    }
+}
 
 } //namespace ORB_SLAM

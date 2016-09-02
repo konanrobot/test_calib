@@ -216,13 +216,51 @@ void MapDrawer::DrawCurrentCamera(pangolin::OpenGlMatrix &Twc)
     glEnd();
 
     glPopMatrix();
+
+    glPointSize(5);
+    glBegin(GL_POINTS);
+    glColor3f(0.0,0.0,0.0);
+    ifstream in("/home/doom/zed/closetvicon.txt");
+    vector<pair<double, double>> v;
+    double x, y;
+    double origx, origy;
+    bool first = true;
+
+    for(int i = 0; i < 615; i++){
+        double temp;
+        in >> temp;
+        if(temp > mCurrentTime){
+            break;
+        }
+        in >> x;
+        in >> y;
+        if(first)
+        {
+            first = false;
+            origx = y;
+            origy = x;
+        }
+        pair<double, double> p;
+        p.first = y; p.second = x;
+        v.push_back(p);
+        in >> temp;
+    }
+    for(int i=0; i<v.size(); i++)
+    {
+        double x = origy-v[i].second;
+        double y = -v[i].first+origx;
+        glVertex3f(1.01*x,0,1.01*y);
+    }
+    glEnd();
+
 }
 
 
-void MapDrawer::SetCurrentCameraPose(const cv::Mat &Tcw)
+void MapDrawer::SetCurrentCameraPose(const cv::Mat &Tcw, const double timestep)
 {
     unique_lock<mutex> lock(mMutexCamera);
     mCameraPose = Tcw.clone();
+    mCurrentTime = timestep;
 }
 
 void MapDrawer::GetCurrentOpenGLCameraMatrix(pangolin::OpenGlMatrix &M)
