@@ -59,13 +59,13 @@ public:
     static int OptimizeSim3(KeyFrame* pKF1, KeyFrame* pKF2, std::vector<MapPoint *> &vpMatches1,
                             g2o::Sim3 &g2oS12, const float th2, const bool bFixScale);
     bool static notInitCalib;
-    static g2o::SE3Quat calibEst;
+    static g2o::SE3Quat calibEst, imu2body;
     bool static notInitBias;
     static ofstream* in;
 
     static Eigen::Matrix3d P, P_k, P_k_1;
 
-    void static getClosestGyro(double &lasttime, double &curtime, vector<pair<double, double>> &gyrodata);
+    void static getClosestGyro(double &lasttime, double &curtime, vector<pair<double, vector<double>>> &gyrodata);
 };
 
 } //namespace ORB_SLAM

@@ -249,7 +249,7 @@ void MapDrawer::DrawCurrentCamera(pangolin::OpenGlMatrix &Twc)
     {
         double x = origy-v[i].second;
         double y = -v[i].first+origx;
-        glVertex3f(1.01*x,0,1.01*y);
+        glVertex3f(-1.03*x,0,-0.94*y);
     }
     glEnd();
 

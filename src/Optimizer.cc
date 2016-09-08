@@ -45,6 +45,7 @@ namespace ORB_SLAM2
 bool Optimizer::notInitCalib = true;
 bool Optimizer::notInitBias = true;
 g2o::SE3Quat Optimizer::calibEst = g2o::SE3Quat();
+g2o::SE3Quat Optimizer::imu2body = g2o::SE3Quat();
 ofstream* Optimizer::in = new ofstream("/home/doom/zed/calibration.txt");
 Eigen::Matrix3d Optimizer::P = Eigen::Matrix3d::Zero();
 Eigen::Matrix3d Optimizer::P_k = Eigen::Matrix3d::Zero();
@@ -58,24 +59,31 @@ void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopF
     BundleAdjustment(vpKFs,vpMP,nIterations,pbStopFlag, nLoopKF, bRobust);
 }
 
-void Optimizer::getClosestGyro(double &lasttime, double &curtime, vector<pair<double, double>> &gyrodata)
+void Optimizer::getClosestGyro(double &lasttime, double &curtime, vector<pair<double, vector<double>>> &gyrodata)
 {
     string gyroPath = "/home/doom/zed/gyro.txt";
     ifstream in(gyroPath);
-    for(int i = 0; i < 530; i++){
+    for(int i = 0; i < 17633; i++){
         double temp;
         in >> temp;
         if((temp >= lasttime) && (temp <= curtime))
         {
-            pair<double, double> ptemp;
+            pair<double, vector<double>> ptemp;
             ptemp.first = temp;
-            in >> temp; in >> temp;
-            ptemp.second = temp;
+            vector<double> vtemp;
+            in >> temp;
+            in >> temp;
+            vtemp.push_back(temp);
+            in >> temp;
+            vtemp.push_back(temp);
+            in >> temp;
+            vtemp.push_back(temp);
+            ptemp.second = vtemp;
             gyrodata.push_back(ptemp);
         }
         else
         {
-            in >> temp; in >> temp;
+            in >> temp; in >> temp; in >> temp; in >> temp;
         }
     }
 //    cout << "The gyro datas between:" << lasttime << ", and:" << curtime
@@ -1036,6 +1044,11 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         priorR.row(1) = Eigen::Vector3d(-0.0781018,-0.0740761,-0.99419);
         priorR.row(2) = Eigen::Vector3d(0.996854,-0.0192965,-0.0768734);
         calibEst = g2o::SE3Quat(priorR, Eigen::Vector3d(0.056829,0.522781,-0.134488));
+        Eigen::Matrix3d imu2bodyR = Eigen::Matrix3d::Identity();
+        imu2bodyR.row(0) = Eigen::Vector3d(0.99721984, -0.02608478, 0.06980099);
+        imu2bodyR.row(1) = Eigen::Vector3d(0.02149499, 0.99760675, 0.06571707);
+        imu2bodyR.row(2) = Eigen::Vector3d(-0.07134816, -0.064034, 0.99539394);
+        imu2body = g2o::SE3Quat(imu2bodyR, Eigen::Vector3d(-0.01489634,-0.00053228,-0.0601826));
 //        Eigen::Matrix3d priorR = Eigen::Matrix3d::Identity();
 //        priorR.row(0) = Eigen::Vector3d(0,-1,0);
 //        priorR.row(1) = Eigen::Vector3d(0,0,-1);
@@ -1199,25 +1212,26 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         g2o::VertexSE3Expmap* lastV = vertexV[i];
         g2o::VertexSE3Expmap* curV = vertexV[i+1];
 #ifdef DOOM_GYRO
-        vector<pair<double, double>> gyrodata;
+        vector<pair<double, vector<double>>> gyrodata;
         getClosestGyro(lastKF->_timestep, curKF->_timestep, gyrodata);
 
-//        cout << "set bias vertex" << endl;
-//        g2o::VertexBias* vBias = new g2o::VertexBias;
-//        if(notInitBias)
-//        {
-//            lastKF->_bias.setZero();
-//            vBias->setEstimate(lastKF->_bias);
-//        }
-//        else
-//        {
-//            vBias->setEstimate(lastKF->_bias);
-//        }
-//        int id_1 = id_ + lastKF->mnId + 1;
-//        cout << "set " << id_1 << " th bias node" << endl;
-//        vBias->setId(id_1);
-//        optimizer.addVertex(vBias);
-//        vvBias.push_back(vBias);
+        cout << "set bias vertex" << endl;
+        g2o::VertexBias* vBias = new g2o::VertexBias;
+        if(notInitBias)
+        {
+            notInitBias = false;
+            lastKF->_bias.setZero();
+            vBias->setEstimate(lastKF->_bias);
+        }
+        else
+        {
+            vBias->setEstimate(lastKF->_bias);
+        }
+        int id_1 = id_ + lastKF->mnId + 1;
+        cout << "set " << id_1 << " th bias node" << endl;
+        vBias->setId(id_1);
+        optimizer.addVertex(vBias);
+        vvBias.push_back(vBias);
 #endif
 //        Eigen::Quaterniond q_est;
 //        Eigen::Matrix3d info;
@@ -1289,33 +1303,77 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
 //        g2o::EdgeGyro* e1 = new g2o::EdgeGyro;
 //        e1->vertices()[0] = lastV;
 //        e1->vertices()[1] = curV;
-        Eigen::Vector3d omega;
-        omega.setZero();
-        omega[2] = gyrodata[0].second;
-        Eigen::Matrix3d R = calibEst.rotation().toRotationMatrix();
-        omega = R*omega;
-        cout << "omega " << omega << endl;
-        g2o::Vector6d p;
-        for(int i = 0; i < 3; i++)
-        {
-            p[i] = omega[i];
-            p[i+3] = 0;
-        }
+//        Eigen::Vector3d omega;
+//        omega.setZero();
+//        omega[0] = gyrodata[0].second[0];
+//        omega[1] = gyrodata[0].second[1];
+//        omega[2] = gyrodata[0].second[2];
+//        Eigen::Matrix3d R = imu2body.rotation().toRotationMatrix();
+//        omega = R*omega;
+//        Eigen::Matrix3d R = calibEst.rotation().toRotationMatrix();
+//        omega = R*omega;
+//        cout << "omega " << omega << endl;
+//        g2o::Vector6d p;
+//        for(int i = 0; i < 3; i++)
+//        {
+//            p[i] = omega[i];
+//            p[i+3] = 0;
+//        }
 //        e1->setMeasurement(g2o::SE3Quat::exp(p));
 //        e1->delta_t = curKF->_timestep - lastKF->_timestep;
 //        cout << "delta_t " << e1->delta_t << endl;
-        Eigen::Matrix3d P = Eigen::Matrix3d::Zero();
-        Eigen::Matrix3d Phi_gyro = Eigen::Matrix3d::Identity()+
-                e1->delta_t*g2o::skewJPL(omega)+
-                0.5*e1->delta_t*e1->delta_t*g2o::skewJPL(omega)*
-                g2o::skewJPL(omega);
-        P = Phi_gyro*P*Phi_gyro.transpose() + Eigen::Matrix3d::Identity()*e1->delta_t*0.05;
+        double lasttime, dt;
+        g2o::SE3Quat q_t = lastV->estimate();
+        g2o::Matrix6d P = g2o::Matrix6d::Zero();
+//        g2o::SE3Quat q_t_1;
+        for(int i = 0; i < gyrodata.size(); i++)
+        {
+            g2o::Vector6d p;
+            for(int j = 0; j < 3; j++)
+            {
+                p[j] = gyrodata[i].second[j];
+                p[j+3] = 0;
+            }
+            if(i == 0)
+            {
+                dt = gyrodata[i].first - lastKF->_timestep;
+                lasttime = gyrodata[i].first;
+            }
+            else
+            {
+                dt = gyrodata[i].first - lasttime;
+            }
+            g2o::Vector6d corrected = p - vBias->estimate();
+            q_t = g2o::SE3Quat::exp(corrected*dt)*q_t;
+            g2o::Matrix6d Phi = g2o::Matrix6d::Zero();
+            Eigen::Matrix3d phi_gyro = Eigen::Matrix3d::Identity()+
+                    dt*g2o::skew(corrected.head(3))+
+                    0.5*dt*dt*g2o::skew(corrected.head(3))*
+                    g2o::skew(corrected.head(3));
+            Phi.block<3, 3>(0, 0) = Phi.block<3, 3>(0, 0) + phi_gyro;
+            Phi.block<3, 3>(3, 3) = Phi.block<3, 3>(3, 3) + Eigen::Matrix3d::Identity();
+            g2o::Matrix6d Q = g2o::Matrix6d::Zero();
+            Q.block<3,3>(0,0) = Q.block<3,3>(0,0) + Eigen::Matrix3d::Identity()*dt*0.00524;
+            Q.block<3,3>(3,3) = Q.block<3,3>(3,3) + Eigen::Matrix3d::Identity();
+            P = Phi*P*Phi.transpose() + Q;
+        }
+//        P = Phi_gyro*P*Phi_gyro.transpose() + Eigen::Matrix3d::Identity()*e1->delta_t*0.00524;
         cout << "covariance " << P << endl;
+        P(3,3) = 0.00001; P(4,4) = 0.00001; P(5,5) = 0.00001;
         g2o::Matrix6d info = g2o::Matrix6d::Zero();
-        Eigen::Matrix3d P_inv = P.inverse();
-        info(0,0) = P_inv(0,0); info(1,1) = P_inv(1,1); info(2,2) = P_inv(2,2);
-        info(3,3) = 0.00001; info(4,4) = 0.00001; info(5,5) = 0.00001;
+        info = P.inverse();
+//        Eigen::Matrix3d P_inv = P.inverse();
+//        info(0,0) = P_inv(0,0); info(1,1) = P_inv(1,1); info(2,2) = P_inv(2,2);
+//        info(3,3) = 0.00001; info(4,4) = 0.00001; info(5,5) = 0.00001;
         cout << "infomation " << info << endl;
+        g2o::EdgePreint* e1 = new g2o::EdgePreint;
+        e1->resize(3);
+        e1->vertices()[0] = lastV;
+        e1->vertices()[1] = curV;
+        e1->vertices()[2] = vBias;
+        e1->setMeasurement(q_t);
+        e1->setInformation(info);
+        optimizer.addEdge(e1);
 //        e1->setInformation(info);
 //        optimizer.addEdge(e1);
 #endif
@@ -1613,16 +1671,19 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     calibEst = se3quat;
     Eigen::Vector3d tempv = se3quat.translation();
     *in << tempv[0] << " " << tempv[2] << endl;
-//    for(int i = 0; i < vvBias.size(); i++)
-//    {
-//        int kf_id = vvBias[i]->id() - id_ - 1;
-//        if(kf_id != vertexKF[i]->mnId)
-//        {
-//            cerr << "bias id not match the kf's" << endl;
-//            continue;
-//        }
-//        vertexKF[i]->_bias = vvBias[i]->estimate();
-//    }
+#ifdef DOOM_GYRO
+    for(int i = 0; i < vvBias.size(); i++)
+    {
+        int kf_id = vvBias[i]->id() - id_ - 1;
+        if(kf_id != vertexKF[i]->mnId)
+        {
+            cerr << "bias id not match the kf's" << endl;
+            continue;
+        }
+        vertexKF[i]->_bias = vvBias[i]->estimate();
+    }
+#endif
+
 #endif
 }
 

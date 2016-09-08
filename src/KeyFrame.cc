@@ -43,7 +43,7 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
     mpORBvocabulary(F.mpORBvocabulary), mbFirstConnection(true), mpParent(NULL), mbNotErase(false),
     mbToBeErased(false), mbBad(false), mHalfBaseline(F.mb/2), mpMap(pMap),
     odomx(F.odomx), odomy(F.odomy), odomtheta(F.odomtheta), _timestep(F.mTimeStamp),
-    _bias(Eigen::Vector3d()),
+    _bias(Eigen::Matrix<double, 6, 1>()),
     vl(F.vl), vr(F.vr),
     P(Eigen::Matrix3d::Zero()), P_del(Eigen::Matrix3d::Zero())
 {

@@ -194,7 +194,7 @@ public:
 
     double _timestep;
 
-    Eigen::Vector3d _bias;
+    Eigen::Matrix<double, 6, 1> _bias;
 
     double vl, vr;
 
